@@ -1,0 +1,244 @@
+drop table if exists sandbox_analytics.tbl_mau_to_sql_educator_v1; 
+create table sandbox_analytics.tbl_mau_to_sql_educator_v1 as 
+
+with tbl_base as 
+(
+select *,  
+       case when activity = 'Special Class' then 1 
+            when activity = 'BATCH DETAILS' then 2
+            end as activity_no
+from sandbox_analytics.tbl_mau_learner_final tmlf 
+where activity_timestamp::date >= current_date - interval '6 month' 
+and activity in ('Special Class','BATCH DETAILS') 
+), 
+
+special_class as
+(
+select pva.user_id as learner_uid,
+       uu.user_id as learner_id, 
+       tt.id as goal_id, 
+       tt.uid as goal_uid, 
+       tt.name as goal_name,
+       bclgm.category_id as category_id, 
+       bclgm.business_category_name,
+       ul.id as object_id, 
+       -- bpva.total_run_time as run_time, 
+       pva.updated_at + interval '330 minutes' as activity_timestamp, 
+       pp.user_id as educator_id, 
+       au.first_name || ' ' || au.last_name as educator_name, 
+       au.username as educator_url_name,
+       'Special Class' as activity, 
+       1 as activity_no, 
+       el.level_cur,
+       case when el.level_cur = 1 then 'Legend'
+            when el.level_cur = 2 then 'Master'
+            when el.level_cur = 3 then 'Expert'
+            when el.level_cur = 4 then 'Star'
+            when el.level_cur = 5 then 'Rising Star' end as educator_category
+       -- rank() over(partition by learner_uid, goal_id, date_trunc('day',pva.updated_at + interval '330 minutes') order by activity_timestamp) rk
+from posts_post pp 
+left join production_video_analytics pva on pva.video_id = pp.uid 
+left join uplus_liveclass ul on ul.id = pp.live_class_id 
+left join uplus_programme up on up.id = ul.programme_id 
+left join uplus_programmeextradetails upe on up.id = upe.programme_id 
+left join topology_topology tt on tt.id = up.topology_id
+left join sandbox_analytics.business_category_leader_goal_mapping bclgm on tt.id = bclgm.goal_id 
+left join users_userprofile uu on uu.user_id = pp.user_id 
+left join auth_user au on au.id = pp.user_id 
+left join
+(select * from educator_levels a where updated_at::date >= current_date - interval '6 month') el 
+on el.educator_id = pp.user_id and tt.id = el.topology_id
+-- and date_trunc('month',pva.updated_at + interval '330 minutes') = date_trunc('month',el.updated_at) 
+left join 
+(
+select learner_uid, 
+       goal_id, 
+       dates, 
+       individual_subscription_type 
+from truth.tbl_daily_learner 
+where dates >= current_date - interval '1 year'
+)tdl on tdl.learner_uid = pva.user_id and tdl.goal_id = tt.id and tdl.dates = (pva.updated_at + interval '330 minutes')::date 
+and tdl.individual_subscription_type in ('Unpaid')
+where pp.is_deleted = 0 
+and pp.is_active = 1 
+and upe.for_subscription = 0 
+and up.is_special = 1 
+and pva.total_run_time <= 14000
+and ul.state <> 50 
+and (pva.updated_at + interval '330 minutes')::date <= current_date
+and (pva.updated_at + interval '330 minutes')::date >= current_date - interval '6 month'
+and tdl.individual_subscription_type in ('Unpaid')
+-- and pva.user_id = '0CHTHTDU7G'
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+),
+
+batch_details as 
+(
+select  bb.uid as batch_uid, 
+        bb.id as batch_id, 
+        bb.name as batch_name, 
+        bb.starts_at as batch_start_date, 
+        bb.completed_at as batch_end_date, 
+        bb.topology_id as goal_id, 
+        cc.user_id as educator_id, 
+        au.first_name || ' ' ||au.last_name as educator_name, 
+        au.username as educator_url_name
+from batch_batch bb
+left join batch_batchcollection bbc on bb.id = bbc.batch_id 
+left join collection_collection cc on cc.id = bbc.collection_id
+left join auth_user au on cc.user_id = au.id
+where -- bb.starts_at >= current_date - interval '6 month' 
+bbc.batch_id is not null
+group by 1,2,3,4,5,6,7,8,9
+-- order by batch_uid 
+), 
+
+batches as
+( 
+select activity_timestamp,
+       learner_uid, 
+       batch_title, 
+       goal_uid,
+       goal_name, 
+       activity, 
+       a.batch_uid,
+       bd.batch_name, 
+       batch_start_date, 
+       goal_id, 
+       bd.educator_id, 
+       bd.educator_name,
+       educator_url_name,
+       el.level_cur,
+       case when el.level_cur = 1 then 'Legend'
+            when el.level_cur = 2 then 'Master'
+            when el.level_cur = 3 then 'Expert'
+            when el.level_cur = 4 then 'Star'
+            when el.level_cur = 5 then 'Rising Star' end as educator_category,
+       activity_no
+       -- rank() over(partition by learner_uid, date_trunc('day',activity_timestamp) order by activity_timestamp) rk
+from 
+(
+-- Learner count: 3710298; Learner count: 3827208 (Amplitude) 3% Delta
+select timestamp + interval '330 minutes' as activity_timestamp, 
+       learner_uid, 
+       educator_uid, 
+       batch_title, 
+       bbva.goal_uid,
+       bbva.goal_name,
+       bbva.batch_uid, 
+       'BATCH DETAILS' as activity,
+       2 as activity_no
+from segment.batch_batch_viewed_android bbva 
+where received_at::date >= current_date - interval '6 month'
+union all
+select timestamp + interval '330 minutes' as activity_timestamp, 
+       learner_uid, 
+       educator_uid, 
+       batch_title, 
+       bbvw.goal_uid,
+       bbvw.goal_name,
+       bbvw.batch_uid, 
+       'BATCH DETAILS' as activity,
+       2 as activity_no
+from segment.batch_batch_viewed_web bbvw 
+where received_at::date >= current_date - interval '6 month'
+)a 
+left join batch_details bd on bd.batch_uid = a.batch_uid 
+left join
+(select * from educator_levels where updated_at::date >= current_date - interval '6 month') el 
+on el.educator_id = bd.educator_id and el.topology_id = bd.goal_id -- and date_trunc('month',a.activity_timestamp) = date_trunc('month',el.updated_at) 
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+),
+
+purchase_details as 
+(
+select learner_uid, 
+        topology_id, 
+        tt.uid as topology_uid, 
+        sub_type, 
+        purchase_type, 
+        purchase_date_time, 
+        amount, 
+        rank() over(partition by learner_uid, topology_id order by purchase_date) rk
+from truth.tbl_revenue_base t
+left join topology_topology tt on tt.id = t.topology_id 
+where purchase_date >= current_date - interval '6 months'
+and t.sub_type in ('Plus','Iconic') 
+)
+
+select learner_uid, 
+       topology_id, 
+       goal_name, 
+       activity_month, 
+       activity_timestamp, 
+       business_category_name, 
+       activity,
+       sql_flag, 
+       call_date,
+       purchased_flag, 
+       purchase_date_time, 
+       -- object_id, 
+       -- batch_uid, 
+       COALESCE(object_id::text, 
+             COALESCE(batch_uid::text,'0')
+            ) as activity_id,
+       COALESCE(class_educator_id, 
+             COALESCE(batch_educator_id, 0)
+            ) as educator_id,
+       coalesce(class_educator_name, 
+             coalesce(batch_educator_name::text,'0')
+            ) as educator_name, 
+       coalesce(class_educator_url_name, 
+             coalesce(batch_educator_url_name::text,'0')
+            ) as educator_url_name, 
+       coalesce(class_edu_level, 
+             coalesce(batch_edu_level,0)
+            ) as educator_level,
+       coalesce(class_educator_category, 
+             coalesce(batch_educator_category::text,'0')
+            ) as educator_category
+from 
+(
+select tbl.learner_uid, 
+       date_trunc('month',tbl.activity_timestamp) as activity_month,
+       tbl.activity_timestamp, 
+       tbl.topology_id, 
+       tt.name as goal_name, 
+       tbl.business_category_name, 
+       tbl.activity, 
+       tbl.sql_flag, 
+       tbl.purchased_flag,
+       tsf.call_date,
+       sc.object_id, 
+       sc.activity_timestamp as class_timestamp,
+       sc.educator_id as class_educator_id, 
+       sc.educator_name as class_educator_name, 
+       sc.educator_url_name as class_educator_url_name,
+       sc.level_cur as class_edu_level, 
+       sc.educator_category as class_educator_category,
+       bb.batch_uid, 
+       bb.educator_id as batch_educator_id, 
+       bb.educator_name as batch_educator_name,
+       bb.educator_url_name as batch_educator_url_name,
+       bb.level_cur as batch_edu_level, 
+       bb.educator_category as batch_educator_category,
+       bb.activity_timestamp as batch_timestamp,
+       trb.purchase_date_time, 
+       trb.sub_type,
+       rank() over(partition by tbl.learner_uid, tbl.business_category_name, date_trunc('day',tbl.activity_timestamp) order by tbl.activity_timestamp asc) rk
+from tbl_base tbl
+left join topology_topology tt on tt.id = tbl.topology_id
+left join special_class sc on sc.activity_no = tbl.activity_no and sc.learner_uid = tbl.learner_uid and sc.goal_id = tbl.topology_id 
+and date_trunc('minute',sc.activity_timestamp) = date_trunc('minute',tbl.activity_timestamp)
+left join batches bb on bb.activity_no = tbl.activity_no and bb.learner_uid = tbl.learner_uid and bb.goal_id = tbl.topology_id 
+and date_trunc('day',bb.activity_timestamp) = date_trunc('day',tbl.activity_timestamp)
+left join 
+(select * from sandbox_analytics.tbl_sql_final tf 
+where tf.call_date::date >= current_date - interval '6 month') tsf 
+on tsf.learner_uid = tbl.learner_uid and date_trunc('month',tsf.call_date) = date_trunc('month',tbl.activity_timestamp)
+left join purchase_details trb on trb.learner_uid = tbl.learner_uid and trb.topology_id = tbl.topology_id
+and date_trunc('month',tsf.call_date) = date_trunc('month',trb.purchase_date_time) and trb.rk = 1 
+)
+where rk = 1
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17
+order by learner_uid, activity_month, topology_id 
