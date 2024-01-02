@@ -1,0 +1,59 @@
+drop table if exists sandbox_analytics.tbl_mau_to_sql_educator_v2;
+create table sandbox_analytics.tbl_mau_to_sql_educator_v2 as 
+
+with aggregation as 
+(
+select learner_uid, 
+       business_category_name, 
+       activity_month,
+       activity_id as batch_uid,
+       listagg(educator_category,',') within group (order by learner_uid, educator_category, business_category_name, activity_month) as educator_cat
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity_id in 
+(
+select activity_id as batch_uid
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS' 
+and educator_id != 0 and educator_category!=0
+-- and business_category_name = 'UPSC CSE'
+-- and activity_id = 'X7WL2NUV'
+and educator_name not ilike 'Unacademy%'
+group by activity_id
+-- having count(distinct educator_id) = 2
+)
+and educator_category != 0 and educator_name not ilike 'Unacademy%' and educator_id != 0
+group by 1,2,3,4
+order by 1,2
+), 
+
+details as 
+(
+select learner_uid, 
+       business_category_name, 
+       activity_id as batch_uid, 
+       activity_month, 
+       count(distinct learner_uid) maus, 
+       count(distinct case when sql_flag = 1 then learner_uid else null end) sqls,
+       count(distinct case when purchased_flag = 1 then learner_uid else null end) purchases
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS' 
+      and educator_id != 0 and educator_category!=0
+      and business_category_name = 'UPSC CSE'
+     --  and learner_uid in ('HLQNZYJH8F')
+group by 1,2,3,4
+order by 1,4
+)
+
+select ag.learner_uid, 
+       ag.business_category_name, 
+       ag.batch_uid, 
+       ag.activity_month, 
+       ag.educator_cat, 
+       dt.maus, 
+       dt.sqls, 
+       dt.purchases
+from aggregation ag 
+left join details dt on ag.learner_uid = dt.learner_uid and ag.business_category_name = dt.business_category_name 
+and ag.activity_month = dt.activity_month and ag.batch_uid = dt.batch_uid 
+group by 1,2,3,4,5,6,7,8
+order by learner_uid, activity_month 
