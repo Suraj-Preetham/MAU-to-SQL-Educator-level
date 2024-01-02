@@ -1,0 +1,228 @@
+select * from sandbox_analytics.tbl_mau_to_sql_educator_v1 
+where business_category_name = 'UPSC CSE' order by learner_uid, activity_month; 
+
+-- Unacademy Upsc Cse: Remove this 
+
+-- Repetitive Special Class
+select count(distinct learner_uid)
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tmlf
+where activity in ('Special Class') and
+learner_uid in 
+(
+select learner_uid 
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tmlf 
+where activity_month = '2023-11-01'
+and business_category_name = 'UPSC CSE' 
+and activity in ('Special Class')
+group by learner_uid
+having count(learner_uid) >1
+)
+order by learner_uid 
+
+-- RCA for above Query
+select pva.user_id as learner_uid, 
+       pva.total_run_time as run_time, 
+       pva.updated_at + interval '330 minutes' as timestamp_req, 
+       ul.id as class_id 
+from production_video_analytics pva 
+left join posts_post pp on pp.uid = pva.video_id 
+left join uplus_liveclass ul on ul.id = pp.live_class_id 
+where pva.user_id = '0ICJNQIOPV' and date_trunc('month',pva.updated_at) = '2023-11-01'
+
+-- Numbers check
+select count(distinct learner_uid) learners
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms
+where activity_month = '2023-11-01' and business_category_name = 'UPSC CSE' 
+
+select count(distinct learner_uid) learners
+from sandbox_analytics.tbl_mau_learner_final 
+where activity_month = '2023-11-01' and business_category_name = 'UPSC CSE' 
+and activity in ('BATCH DETAILS','Special Class')
+
+-- Difference from main table :: Fixed
+select count(distinct learner_uid) from sandbox_analytics.tbl_mau_learner_final tmlf 
+where learner_uid in 
+(
+(
+select learner_uid
+from sandbox_analytics.tbl_mau_learner_final tmlf 
+where activity_month = '2023-11-01'
+and business_category_name = 'UPSC CSE' 
+and activity in ('BATCH DETAILS','Special Class')
+group by 1
+)
+minus
+(
+select learner_uid
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms
+where activity_month = '2023-11-01'
+and business_category_name = 'UPSC CSE' 
+and activity in ('BATCH DETAILS','Special Class')
+group by 1
+)
+)
+
+-- Distribution of educator count per batch
+select no_of_educators, count(distinct batch_uid) batches 
+from 
+(
+select activity_id as batch_uid, count(distinct educator_id) as no_of_educators
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS' and educator_name not ilike 'Unacademy%' and educator_id != 0
+and business_category_name = 'UPSC CSE'
+group by 1
+) 
+group by 1
+order by 1 asc
+
+-- Total No of batches
+select count(distinct activity_id) as batches
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS' and educator_id != 0
+
+
+-- Distribution of batches by single educators 
+select educator_level, count(distinct activity_id) as batches
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity_id in 
+(
+select activity_id as batch_uid
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS'
+group by activity_id
+having count(distinct educator_id) = 1
+) 
+and educator_name not ilike 'Unacademy%' -- and business_category_name = 'UPSC CSE'
+group by 1
+order by 1 asc
+
+
+-- Single educator batch stats
+select business_category_name,
+       educator_level,
+       activity,
+       sum(maus) as total_maus, 
+       sum(sqls) as total_sqls,
+       sum(purchases) as total_purchases, 
+       sum(sqls)*1.00/sum(maus) as sql_conversions, 
+       nullif(sum(purchases)*1.00/nullif(sum(sqls),0),0) as purchase_conversions
+from 
+(
+select business_category_name, 
+       activity,
+       activity_month,
+       educator_level,
+       count(distinct learner_uid) maus, 
+       count(distinct case when sql_flag = 1 then learner_uid else null end) sqls,
+       count(distinct case when purchased_flag = 1 then learner_uid else null end) purchases
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity_id in 
+(
+select activity_id as batch_uid
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS' and educator_level != 0
+group by activity_id
+having count(distinct educator_id) = 1
+) 
+and educator_name not ilike 'Unacademy%'
+group by 1,2,3,4
+)
+where business_category_name ilike 'UPSC CSE'
+group by 1,2,3
+order by 2 asc
+
+-- Single educator distribution
+select educator_level, 
+       count(distinct activity_id) as batches
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity_id in 
+(
+select activity_id as batch_uid
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS'
+group by activity_id
+having count(distinct educator_id) = 1
+) 
+and educator_name not ilike 'Unacademy%'
+group by 1
+order by 1 asc
+
+-- Batch RCA
+select * from batch_batch bb where bb.uid in ('DDJGTHFE')
+select * from batch_batchcollection bbc where batch_id in (18225)
+select * from collection_collection cc where cc.id in (2814163)
+
+
+-- Single educator stats check
+select business_category_name, 
+       activity_month, 
+       activity, 
+       min(educator_level) as educator_level,
+       count(distinct learner_uid) maus, 
+       count(distinct case when sql_flag = 1 then learner_uid else null end) sqls,
+       count(distinct case when purchased_flag = 1 then learner_uid else null end) purchases
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where educator_id not in (3541201,0) and educator_name not ilike 'Unacademy%'
+and activity_id in 
+(
+select activity_id as batch_uid
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS'
+group by activity_id
+having count(distinct educator_id) = 1
+) 
+group by 1,2,3
+
+-- Segment table check :: Fixed
+select learner_uid, batch_uid, goal_uid, received_at + interval '330 minutes',timestamp + interval '330 minutes' as another_time 
+from segment.batch_batch_viewed_android bbva 
+where learner_uid in ('0004T7J1TB') and received_at::Date >= current_date - interval '6 months'
+
+
+-- Batch level check for educator_id = 0
+select * from batches bb where learner_uid in 
+(
+select learner_uid from sandbox_analytics.tbl_mau_to_sql_educator_v1 tmtsev 
+where activity in ('BATCH DETAILS') and activity_id in
+(
+select activity_id as batch_uid
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS'
+group by activity_id
+having count(distinct educator_id) = 1)
+)
+and educator_id = 0
+order by learner_uid 
+
+
+-- Educator_id = 0 checks 
+select *
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where educator_id not in (3541201) and educator_name not ilike 'Unacademy%'
+and activity_id in 
+(
+select activity_id as batch_uid
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS'
+group by activity_id
+having count(distinct educator_id) = 1
+) 
+and educator_id = 0
+order by learner_uid 
+
+
+-- Distribution of educators
+select educator_level, count(distinct educator_name)
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity_id in 
+(
+select activity_id as batch_uid
+from sandbox_analytics.tbl_mau_to_sql_educator_v1 tms 
+where activity = 'BATCH DETAILS' and educator_level != 0
+group by activity_id
+having count(distinct educator_id) = 1
+)
+and business_category_name ilike 'CAT%'
+group by 1 
+order by 1 
+
